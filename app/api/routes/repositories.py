@@ -55,23 +55,23 @@ def list_repositories(
 
 
 @router.get("/{repo_id}", response_model=RepositoryDetailResponse)
-def get_repository(repo_id: int, db: Session = Depends(get_db)) -> RepositoryDetailResponse:
+def get_repository(repo_id: str, db: Session = Depends(get_db)) -> RepositoryDetailResponse:
     return repo_service.get_repository_detail(db, repo_id)
 
 
 @router.patch("/{repo_id}", response_model=RepositoryDetailResponse)
 def update_repository(
-    repo_id: int,
+    repo_id: str,
     payload: RepositoryUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RepositoryDetailResponse:
-    return repo_service.update_repository(db, repo_id=repo_id, user=current_user, payload=payload)
+    return repo_service.update_repository(db, repo_ref=repo_id, user=current_user, payload=payload)
 
 
 @router.get("/{repo_id}/contributors", response_model=PageResponse[ContributorSummary])
 def get_repository_contributors(
-    repo_id: int,
+    repo_id: str,
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -81,7 +81,7 @@ def get_repository_contributors(
 
 @router.get("/{repo_id}/merges", response_model=PageResponse[MergeSummary])
 def get_repository_merges(
-    repo_id: int,
+    repo_id: str,
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -91,7 +91,7 @@ def get_repository_merges(
 
 @router.get("/{repo_id}/pull-requests", response_model=PageResponse[PullRequestListItem])
 def get_repository_pull_requests(
-    repo_id: int,
+    repo_id: str,
     status: Annotated[list[PullRequestStatus] | None, Query()] = None,
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
@@ -110,7 +110,7 @@ def get_repository_pull_requests(
 
 @router.get("/{repo_id}/stats", response_model=RepositoryStatsResponse)
 def get_repository_stats(
-    repo_id: int,
+    repo_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RepositoryStatsResponse:

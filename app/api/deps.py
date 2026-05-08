@@ -38,4 +38,7 @@ def get_current_user_optional(
 ) -> User | None:
     if credentials is None:
         return None
-    return get_current_user(credentials=credentials, db=db)
+    try:
+        return get_current_user(credentials=credentials, db=db)
+    except AppError:
+        return None

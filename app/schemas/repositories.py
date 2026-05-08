@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
 
@@ -33,6 +33,13 @@ class ExternalLink(BaseModel):
     label: str = Field(min_length=1, max_length=50)
     url: HttpUrl
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_string_link(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            return {"label": "link", "url": data}
+        return data
+
 
 class ReadmeNamedItem(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -45,6 +52,14 @@ class ReadmePayload(BaseModel):
     regions: list[ReadmeNamedItem] | None = Field(default=None, max_length=50)
     world_rules: list[str] | None = Field(default=None, max_length=50)
     forbidden_settings: list[str] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_content_field(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "overview" not in data and "content" in data:
+            data = dict(data)
+            data["overview"] = data["content"]
+        return data
 
     @field_validator("world_rules", "forbidden_settings")
     @classmethod
@@ -79,6 +94,19 @@ class RepositoryCreateRequest(BaseModel):
     def validate_recruiting_areas(cls, value: list[RecruitingAreaSlug]) -> list[RecruitingAreaSlug]:
         return dedupe_recruiting_areas(value)
 
+    @field_validator("recruiting_areas", mode="before")
+    @classmethod
+    def normalize_recruiting_area_aliases(cls, value: Any) -> Any:
+        return normalize_recruiting_aliases(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_thumbnail_field(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "thumbnail_url" not in data and "thumbnail" in data:
+            data = dict(data)
+            data["thumbnail_url"] = data["thumbnail"]
+        return data
+
 
 class RepositoryUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=100)
@@ -104,6 +132,19 @@ class RepositoryUpdateRequest(BaseModel):
             return value
         return dedupe_recruiting_areas(value)
 
+    @field_validator("recruiting_areas", mode="before")
+    @classmethod
+    def normalize_recruiting_area_aliases(cls, value: Any) -> Any:
+        return normalize_recruiting_aliases(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_thumbnail_field(cls, data):
+        if isinstance(data, dict) and "thumbnail_url" not in data and "thumbnail" in data:
+            data = dict(data)
+            data["thumbnail_url"] = data["thumbnail"]
+        return data
+
     @model_validator(mode="before")
     @classmethod
     def reject_invalid_nulls(cls, data):
@@ -125,6 +166,7 @@ class UserSummary(BaseModel):
 
 class ReadmeResponse(BaseModel):
     overview: str | None
+    content: str | None = None
     characters: list[ReadmeNamedItem]
     regions: list[ReadmeNamedItem]
     world_rules: list[str]
@@ -133,9 +175,11 @@ class ReadmeResponse(BaseModel):
 
 class RepositoryDetailResponse(BaseModel):
     id: int
+    slug: str
     title: str
     description: str | None
     thumbnail_url: str | None
+    thumbnail: str | None = None
     tags: list[str]
     external_links: list[ExternalLink]
     readme: ReadmeResponse
@@ -154,9 +198,11 @@ class RepositoryDetailResponse(BaseModel):
 
 class RepositoryListItem(BaseModel):
     id: int
+    slug: str
     title: str
     description: str | None
     thumbnail_url: str | None
+    thumbnail: str | None = None
     tags: list[str]
     author: UserSummary
     recruiting_areas: list[RecruitingAreaSlug]
@@ -259,3 +305,17 @@ def dedupe_recruiting_areas(value: list[RecruitingAreaSlug]) -> list[RecruitingA
             seen.add(item)
             normalized.append(item)
     return normalized
+
+
+def normalize_recruiting_aliases(value: Any) -> Any:
+    if value is None:
+        return value
+    if not isinstance(value, list):
+        return value
+    alias_map = {
+        "episode_add": RecruitingAreaSlug.EVENT_EPISODE.value,
+        "location_add": RecruitingAreaSlug.REGION.value,
+        "extra": RecruitingAreaSlug.OTHER.value,
+        "storyboard": RecruitingAreaSlug.EVENT_EPISODE.value,
+    }
+    return [alias_map.get(item, item) if isinstance(item, str) else item for item in value]

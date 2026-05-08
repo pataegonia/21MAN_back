@@ -1,3 +1,6 @@
+import re
+import secrets
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -5,20 +8,50 @@ from app.models.ai_analysis import AiAnalysis
 from app.models.repository import RecruitingArea, Repository, RepositoryTag, Tag
 
 
+_SLUG_REPLACE = re.compile(r"[^a-z0-9가-힣]+")
+_SLUG_MAX_BASE = 180
+
+
+def _repository_eager_load_options() -> list:
+    return [
+        selectinload(Repository.author),
+        selectinload(Repository.characters),
+        selectinload(Repository.regions),
+        selectinload(Repository.rules),
+        selectinload(Repository.forbidden_items),
+        selectinload(Repository.recruiting_areas),
+        selectinload(Repository.tags).selectinload(RepositoryTag.tag),
+    ]
+
+
 def get_repository_by_id(db: Session, repo_id: int) -> Repository | None:
-    return db.get(
-        Repository,
-        repo_id,
-        options=[
-            selectinload(Repository.author),
-            selectinload(Repository.characters),
-            selectinload(Repository.regions),
-            selectinload(Repository.rules),
-            selectinload(Repository.forbidden_items),
-            selectinload(Repository.recruiting_areas),
-            selectinload(Repository.tags).selectinload(RepositoryTag.tag),
-        ],
-    )
+    return db.get(Repository, repo_id, options=_repository_eager_load_options())
+
+
+def get_repository_by_slug(db: Session, slug: str) -> Repository | None:
+    statement = select(Repository).where(Repository.slug == slug).options(*_repository_eager_load_options())
+    return db.scalar(statement)
+
+
+def get_repository_by_ref(db: Session, ref: int | str) -> Repository | None:
+    if isinstance(ref, int):
+        return get_repository_by_id(db, ref)
+    text = ref.strip()
+    if text.isdigit():
+        return get_repository_by_id(db, int(text))
+    return get_repository_by_slug(db, text)
+
+
+def generate_unique_slug(db: Session, title: str) -> str:
+    base = _SLUG_REPLACE.sub("-", title.strip().lower()).strip("-")
+    if not base:
+        base = "repo"
+    base = base[:_SLUG_MAX_BASE]
+    for _ in range(8):
+        candidate = f"{base}-{secrets.token_hex(4)}"
+        if db.scalar(select(Repository.id).where(Repository.slug == candidate)) is None:
+            return candidate
+    raise RuntimeError("Failed to generate unique repository slug")
 
 
 def get_or_create_tag(db: Session, name: str) -> Tag:

@@ -54,12 +54,12 @@ router = APIRouter(tags=["pull-requests"])
     response_model=CreateDraftResponse,
 )
 def create_or_get_draft(
-    repo_id: int,
+    repo_id: str,
     response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CreateDraftResponse:
-    pr, created = pr_service.create_or_get_draft(db, repo_id=repo_id, user_id=current_user.id)
+    pr, created = pr_service.create_or_get_draft(db, repo_ref=repo_id, user_id=current_user.id)
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return CreateDraftResponse(
         pull_request_id=pr.id,
@@ -249,7 +249,7 @@ def get_pr_detail(
 
 @router.get("/pull-requests", response_model=PRListResponse)
 def list_prs(
-    repo_id: int | None = None,
+    repo_id: str | None = None,
     author: str | None = None,
     status: list[str] = Query(default=[]),
     type: str | None = None,

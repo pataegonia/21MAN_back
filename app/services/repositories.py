@@ -43,8 +43,10 @@ MAX_PAGE_SIZE = 100
 
 
 def create_repository(db: Session, *, author: User, payload: RepositoryCreateRequest) -> RepositoryDetailResponse:
+    slug = repo_repo.generate_unique_slug(db, payload.title)
     repo = Repository(
         author_id=author.id,
+        slug=slug,
         title=payload.title,
         description=payload.description,
         thumbnail_url=payload.thumbnail_url,
@@ -115,19 +117,19 @@ def list_repositories(
     )
 
 
-def get_repository_detail(db: Session, repo_id: int) -> RepositoryDetailResponse:
-    repo = _get_repo_or_404(db, repo_id)
+def get_repository_detail(db: Session, repo_ref: int | str) -> RepositoryDetailResponse:
+    repo = _get_repo_or_404(db, repo_ref)
     return _to_detail_response(db, repo)
 
 
 def update_repository(
     db: Session,
     *,
-    repo_id: int,
+    repo_ref: int | str,
     user: User,
     payload: RepositoryUpdateRequest,
 ) -> RepositoryDetailResponse:
-    repo = _get_repo_or_404(db, repo_id)
+    repo = _get_repo_or_404(db, repo_ref)
     _ensure_repo_owner(repo, user)
     updates = payload.model_dump(exclude_unset=True)
 
@@ -164,8 +166,8 @@ def update_repository(
     return get_repository_detail(db, repo.id)
 
 
-def list_contributors(db: Session, repo_id: int, *, page: int, size: int) -> PageResponse[ContributorSummary]:
-    _get_repo_or_404(db, repo_id)
+def list_contributors(db: Session, repo_ref: int | str, *, page: int, size: int) -> PageResponse[ContributorSummary]:
+    repo = _get_repo_or_404(db, repo_ref)
     page, size = _normalize_pagination(page, size)
 
     statement = (
@@ -178,7 +180,7 @@ def list_contributors(db: Session, repo_id: int, *, page: int, size: int) -> Pag
             func.max(Merge.merged_at).label("last_merged_at"),
         )
         .join(Merge, Merge.contributor_id == User.id)
-        .where(Merge.repository_id == repo_id)
+        .where(Merge.repository_id == repo.id)
         .group_by(User.id)
         .order_by(desc("merge_count"), desc("last_merged_at"))
     )
@@ -203,14 +205,14 @@ def list_contributors(db: Session, repo_id: int, *, page: int, size: int) -> Pag
     )
 
 
-def list_merges(db: Session, repo_id: int, *, page: int, size: int) -> PageResponse[MergeSummary]:
-    _get_repo_or_404(db, repo_id)
+def list_merges(db: Session, repo_ref: int | str, *, page: int, size: int) -> PageResponse[MergeSummary]:
+    repo = _get_repo_or_404(db, repo_ref)
     page, size = _normalize_pagination(page, size)
 
     statement = (
         select(Merge, User)
         .join(User, User.id == Merge.contributor_id)
-        .where(Merge.repository_id == repo_id)
+        .where(Merge.repository_id == repo.id)
         .order_by(desc(Merge.merged_at), desc(Merge.id))
     )
     total = repo_repo.count_statement(db, statement)
@@ -237,14 +239,14 @@ def list_merges(db: Session, repo_id: int, *, page: int, size: int) -> PageRespo
 
 def list_repository_pull_requests(
     db: Session,
-    repo_id: int,
+    repo_ref: int | str,
     *,
     current_user: User | None,
     statuses: list[PullRequestStatus] | None,
     page: int,
     size: int,
 ) -> PageResponse[PullRequestListItem]:
-    repo = _get_repo_or_404(db, repo_id)
+    repo = _get_repo_or_404(db, repo_ref)
     page, size = _normalize_pagination(page, size)
 
     if statuses and PullRequestStatus.DRAFT in statuses:
@@ -255,7 +257,7 @@ def list_repository_pull_requests(
         select(PullRequest, User)
         .join(User, User.id == PullRequest.author_id)
         .where(
-            PullRequest.repository_id == repo_id,
+            PullRequest.repository_id == repo.id,
             PullRequest.status != PullRequestStatus.DRAFT,
         )
     )
@@ -293,8 +295,8 @@ def list_repository_pull_requests(
     )
 
 
-def get_repository_stats(db: Session, repo_id: int, *, user: User) -> RepositoryStatsResponse:
-    repo = _get_repo_or_404(db, repo_id)
+def get_repository_stats(db: Session, repo_ref: int | str, *, user: User) -> RepositoryStatsResponse:
+    repo = _get_repo_or_404(db, repo_ref)
     _ensure_repo_owner(repo, user)
 
     counts = db.execute(
@@ -305,13 +307,13 @@ def get_repository_stats(db: Session, repo_id: int, *, user: User) -> Repository
             func.sum(case((PullRequest.status == PullRequestStatus.ACCEPTED, 1), else_=0)).label("awaiting_merge_prs"),
             func.sum(case((PullRequest.status == PullRequestStatus.CHANGES_REQUESTED, 1), else_=0)).label("awaiting_resubmit_prs"),
             func.sum(case((PullRequest.status == PullRequestStatus.REJECTED, 1), else_=0)).label("rejected_prs"),
-        ).where(PullRequest.repository_id == repo_id)
+        ).where(PullRequest.repository_id == repo.id)
     ).one()
 
     received_prs = counts.received_prs or 0
     merged_prs = counts.merged_prs or 0
     return RepositoryStatsResponse(
-        repository_id=repo_id,
+        repository_id=repo.id,
         received_prs=received_prs,
         merged_prs=merged_prs,
         merge_ratio=round(merged_prs / received_prs, 2) if received_prs else 0.0,
@@ -322,8 +324,8 @@ def get_repository_stats(db: Session, repo_id: int, *, user: User) -> Repository
     )
 
 
-def _get_repo_or_404(db: Session, repo_id: int) -> Repository:
-    repo = repo_repo.get_repository_by_id(db, repo_id)
+def _get_repo_or_404(db: Session, repo_ref: int | str) -> Repository:
+    repo = repo_repo.get_repository_by_ref(db, repo_ref)
     if repo is None:
         raise AppError("REPOSITORY_NOT_FOUND", "Repository not found", 404)
     return repo
@@ -453,13 +455,16 @@ def _to_detail_response(db: Session, repo: Repository) -> RepositoryDetailRespon
     ).one()
     return RepositoryDetailResponse(
         id=repo.id,
+        slug=repo.slug,
         title=repo.title,
         description=repo.description,
         thumbnail_url=repo.thumbnail_url,
+        thumbnail=repo.thumbnail_url,
         tags=[repo_tag.tag.name for repo_tag in repo.tags],
         external_links=[ExternalLink(**link) for link in (repo.external_links or [])],
         readme=ReadmeResponse(
             overview=repo.readme_overview,
+            content=repo.readme_overview,
             characters=[
                 ReadmeNamedItem(name=item.name, description=item.content)
                 for item in sorted(repo.characters, key=lambda item: item.order_index)
@@ -486,9 +491,11 @@ def _to_detail_response(db: Session, repo: Repository) -> RepositoryDetailRespon
 def _to_list_item(repo: Repository, pr_count: int, merge_count: int) -> RepositoryListItem:
     return RepositoryListItem(
         id=repo.id,
+        slug=repo.slug,
         title=repo.title,
         description=repo.description,
         thumbnail_url=repo.thumbnail_url,
+        thumbnail=repo.thumbnail_url,
         tags=[repo_tag.tag.name for repo_tag in repo.tags],
         author=_user_summary(repo.author),
         recruiting_areas=repo_repo.recruiting_slugs(repo),

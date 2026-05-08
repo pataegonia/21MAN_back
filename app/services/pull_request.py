@@ -13,6 +13,7 @@ from app.models.merge import Merge
 from app.models.notification import Notification
 from app.models.pull_request import PullRequest, RejectReason
 from app.repositories import pull_request as pr_repo
+from app.repositories import repositories as repo_repo
 
 
 def _now() -> datetime:
@@ -50,17 +51,17 @@ def _add_pr_notification(
 # Draft CRUD
 # ---------------------------------------------------------------------------
 
-def create_or_get_draft(db: Session, *, repo_id: int, user_id: int) -> tuple[PullRequest, bool]:
-    repo = pr_repo.get_repository_by_id(db, repo_id)
+def create_or_get_draft(db: Session, *, repo_ref: int | str, user_id: int) -> tuple[PullRequest, bool]:
+    repo = repo_repo.get_repository_by_ref(db, repo_ref)
     if repo is None:
         raise AppError("REPOSITORY_NOT_FOUND", "존재하지 않는 Repository입니다.", status_code=404)
 
-    existing = pr_repo.get_draft_by_user_and_repo(db, user_id=user_id, repo_id=repo_id)
+    existing = pr_repo.get_draft_by_user_and_repo(db, user_id=user_id, repo_id=repo.id)
     if existing is not None:
         return existing, False
 
     now = _now()
-    pr = pr_repo.create_pr(db, repository_id=repo_id, author_id=user_id, now=now)
+    pr = pr_repo.create_pr(db, repository_id=repo.id, author_id=user_id, now=now)
     db.commit()
     db.refresh(pr)
     return pr, True
@@ -366,7 +367,7 @@ def get_pr_detail(
 def list_prs(
     db: Session,
     *,
-    repo_id: int | None,
+    repo_id: int | str | None,
     author_username: str | None,
     statuses: list[str],
     contribution_type: str | None,
@@ -376,9 +377,15 @@ def list_prs(
     size: int,
 ) -> tuple[list, int]:
     size = min(size, 100)
+    resolved_repo_id: int | None = None
+    if repo_id is not None:
+        repo = repo_repo.get_repository_by_ref(db, repo_id)
+        if repo is None:
+            return [], 0
+        resolved_repo_id = repo.id
     return pr_repo.list_prs(
         db,
-        repo_id=repo_id,
+        repo_id=resolved_repo_id,
         author_username=author_username,
         statuses=statuses,
         contribution_type=contribution_type,
