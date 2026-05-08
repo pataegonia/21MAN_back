@@ -1,5 +1,6 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from hashlib import sha256
 
 from sqlalchemy.orm import Session
 
@@ -269,3 +270,80 @@ def save_contributor_comment(db: Session, *, pr_id: int, user_id: int, comment: 
     db.commit()
     db.refresh(pr)
     return pr
+
+
+# ---------------------------------------------------------------------------
+# PR 조회 (05-pull-requests-query)
+# ---------------------------------------------------------------------------
+
+def get_pr_detail(
+    db: Session,
+    *,
+    pr_id: int,
+    current_user_id: int | None,
+    ip_hash: str,
+) -> tuple[PullRequest, bool]:
+    pr = pr_repo.get_pr_for_detail(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+
+    if pr.visibility == Visibility.PRIVATE:
+        if not current_user_id:
+            raise AppError("FORBIDDEN", "열람 권한이 없습니다.", status_code=403)
+        if current_user_id != pr.author_id and current_user_id != pr.repository.author_id:
+            raise AppError("FORBIDDEN", "열람 권한이 없습니다.", status_code=403)
+
+    if (
+        current_user_id
+        and current_user_id == pr.repository.author_id
+        and current_user_id != pr.author_id
+    ):
+        now = _now()
+        day_bucket_hash = sha256(f"{ip_hash}:{date.today()}".encode()).hexdigest()
+        pr_repo.create_view_log(
+            db,
+            pr_id=pr_id,
+            viewer_id=current_user_id,
+            ip_hash=ip_hash,
+            day_bucket_hash=day_bucket_hash,
+            now=now,
+        )
+        db.add(AuditLog(
+            actor_id=current_user_id,
+            action_type="PR_VIEW",
+            target_type="pull_request",
+            target_id=pr_id,
+            payload={},
+            created_at=now,
+        ))
+        db.commit()
+        db.refresh(pr)
+
+    is_owner = current_user_id == pr.author_id
+    return pr, is_owner
+
+
+def list_prs(
+    db: Session,
+    *,
+    repo_id: int | None,
+    author_username: str | None,
+    statuses: list[str],
+    contribution_type: str | None,
+    grade: str | None,
+    current_user_id: int | None,
+    page: int,
+    size: int,
+) -> tuple[list, int]:
+    size = min(size, 100)
+    return pr_repo.list_prs(
+        db,
+        repo_id=repo_id,
+        author_username=author_username,
+        statuses=statuses,
+        contribution_type=contribution_type,
+        grade=grade,
+        current_user_id=current_user_id,
+        page=page,
+        size=size,
+    )
