@@ -281,6 +281,96 @@ class RepositoryStatsResponse(BaseModel):
     rejected_prs: int
 
 
+class DashboardConflictCheck(BaseModel):
+    risk_level: str
+    check_target: str
+    passed: bool
+    detail: str
+
+
+class DashboardAiAnalysis(BaseModel):
+    id: int
+    pull_request_id: int
+    run_seq: int
+    generated_title: str
+    summary: str
+    structured_content: dict
+    contribution_types: list[str]
+    score_scope: int
+    score_permanence: int
+    score_cascade: int
+    score_alignment: int
+    score_specificity: int
+    score_total: int
+    ai_grade: ContributionGrade
+    rationale: str
+    missing_info: list[str]
+    conflict_checks: list[DashboardConflictCheck]
+    model_name: str
+    created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        return format_utc(value)
+
+
+class DashboardViewLogSummary(BaseModel):
+    total_views: int
+    first_viewed_at: datetime | None
+
+    @field_serializer("first_viewed_at")
+    def serialize_first_viewed_at(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return format_utc(value)
+
+
+class RepositoryDashboardPullRequest(BaseModel):
+    id: int
+    repository: RepositoryNestedSummary
+    author: UserSummary
+    title: str | None
+    raw_content: str | None
+    contribution_types: list[str]
+    visibility: Visibility
+    status: PullRequestStatus
+    contributor_comment: str | None
+    author_grade_override: ContributionGrade | None
+    author_grade_override_reason: str | None
+    author_review_comment: str | None
+    changes_requested_reason: str | None
+    latest_ai_analysis: DashboardAiAnalysis | None
+    view_log_summary: DashboardViewLogSummary
+    first_drafted_at: datetime
+    last_saved_at: datetime
+    submitted_at: datetime | None
+    reviewed_at: datetime | None
+    merged_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer(
+        "first_drafted_at",
+        "last_saved_at",
+        "submitted_at",
+        "reviewed_at",
+        "merged_at",
+        "created_at",
+        "updated_at",
+    )
+    def serialize_datetime(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return format_utc(value)
+
+
+class RepositoryDashboardResponse(BaseModel):
+    repository: RepositoryDetailResponse
+    stats: RepositoryStatsResponse
+    pull_requests: list[RepositoryDashboardPullRequest]
+    users: list[UserSummary]
+
+
 def normalize_tags(value: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()

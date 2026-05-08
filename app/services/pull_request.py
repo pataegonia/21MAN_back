@@ -360,8 +360,8 @@ def get_pr_detail(
         db.commit()
         db.refresh(pr)
 
-    is_owner = current_user_id == pr.author_id
-    return pr, is_owner
+    can_see_view_summary = current_user_id in (pr.author_id, pr.repository.author_id)
+    return pr, can_see_view_summary
 
 
 def list_prs(

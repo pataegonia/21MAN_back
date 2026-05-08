@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import case, desc, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import AppError
+from app.models.ai_analysis import AiAnalysis
 from app.models.audit_log import AuditLog
 from app.models.enums import ContributionGrade, PullRequestStatus, Visibility
 from app.models.merge import Merge
@@ -22,6 +23,9 @@ from app.models.user import User
 from app.repositories import repositories as repo_repo
 from app.schemas.repositories import (
     ContributorSummary,
+    DashboardAiAnalysis,
+    DashboardConflictCheck,
+    DashboardViewLogSummary,
     ExternalLink,
     MergeSummary,
     PageResponse,
@@ -30,6 +34,8 @@ from app.schemas.repositories import (
     ReadmeResponse,
     RecruitingAreaSlug,
     RepositoryCreateRequest,
+    RepositoryDashboardPullRequest,
+    RepositoryDashboardResponse,
     RepositoryDetailResponse,
     RepositoryListItem,
     RepositoryNestedSummary,
@@ -324,6 +330,49 @@ def get_repository_stats(db: Session, repo_ref: int | str, *, user: User) -> Rep
     )
 
 
+def get_repository_dashboard(
+    db: Session,
+    repo_ref: int | str,
+    *,
+    user: User,
+) -> RepositoryDashboardResponse:
+    repo = _get_repo_or_404(db, repo_ref)
+    _ensure_repo_owner(repo, user)
+
+    pull_requests = db.scalars(
+        select(PullRequest)
+        .where(
+            PullRequest.repository_id == repo.id,
+            PullRequest.status != PullRequestStatus.DRAFT,
+        )
+        .options(
+            selectinload(PullRequest.author),
+            selectinload(PullRequest.repository).selectinload(Repository.author),
+            selectinload(PullRequest.analyses).selectinload(AiAnalysis.conflict_checks),
+            selectinload(PullRequest.view_logs),
+        )
+        .order_by(desc(PullRequest.submitted_at), desc(PullRequest.id))
+        .limit(100)
+    ).all()
+
+    users_by_id: dict[int, User] = {repo.author.id: repo.author}
+    for pull_request in pull_requests:
+        users_by_id[pull_request.author.id] = pull_request.author
+
+    return RepositoryDashboardResponse(
+        repository=_to_detail_response(db, repo),
+        stats=get_repository_stats(db, repo.id, user=user),
+        pull_requests=[
+            _to_dashboard_pull_request(pull_request, viewer_id=user.id)
+            for pull_request in pull_requests
+        ],
+        users=[
+            _user_summary(item)
+            for item in sorted(users_by_id.values(), key=lambda item: item.username.lower())
+        ],
+    )
+
+
 def _get_repo_or_404(db: Session, repo_ref: int | str) -> Repository:
     repo = repo_repo.get_repository_by_ref(db, repo_ref)
     if repo is None:
@@ -503,6 +552,73 @@ def _to_list_item(repo: Repository, pr_count: int, merge_count: int) -> Reposito
         merge_count=merge_count,
         created_at=repo.created_at,
         updated_at=repo.updated_at,
+    )
+
+
+def _to_dashboard_pull_request(pull_request: PullRequest, *, viewer_id: int) -> RepositoryDashboardPullRequest:
+    latest = max(pull_request.analyses, key=lambda analysis: analysis.run_seq) if pull_request.analyses else None
+    viewer_logs = [view_log for view_log in pull_request.view_logs if view_log.viewer_id == viewer_id]
+    first_viewed_at = min((view_log.viewed_at for view_log in viewer_logs), default=None)
+    can_include_raw_content = pull_request.author_id == viewer_id or first_viewed_at is not None
+
+    return RepositoryDashboardPullRequest(
+        id=pull_request.id,
+        repository=RepositoryNestedSummary(id=pull_request.repository.id, title=pull_request.repository.title),
+        author=_user_summary(pull_request.author),
+        title=(latest.generated_title if latest else pull_request.title),
+        raw_content=pull_request.raw_content if can_include_raw_content else None,
+        contribution_types=(latest.contribution_types if latest else pull_request.contribution_types) or [],
+        visibility=pull_request.visibility,
+        status=pull_request.status,
+        contributor_comment=pull_request.contributor_comment,
+        author_grade_override=pull_request.author_grade_override,
+        author_grade_override_reason=pull_request.author_grade_override_reason,
+        author_review_comment=pull_request.author_review_comment,
+        changes_requested_reason=pull_request.changes_requested_reason,
+        latest_ai_analysis=_to_dashboard_ai_analysis(latest) if latest else None,
+        view_log_summary=DashboardViewLogSummary(
+            total_views=len(viewer_logs),
+            first_viewed_at=first_viewed_at,
+        ),
+        first_drafted_at=pull_request.first_drafted_at,
+        last_saved_at=pull_request.last_saved_at,
+        submitted_at=pull_request.submitted_at,
+        reviewed_at=pull_request.reviewed_at,
+        merged_at=pull_request.merged_at,
+        created_at=pull_request.created_at,
+        updated_at=pull_request.updated_at,
+    )
+
+
+def _to_dashboard_ai_analysis(analysis: AiAnalysis) -> DashboardAiAnalysis:
+    return DashboardAiAnalysis(
+        id=analysis.id,
+        pull_request_id=analysis.pull_request_id,
+        run_seq=analysis.run_seq,
+        generated_title=analysis.generated_title or "",
+        summary=analysis.summary or "",
+        structured_content=analysis.structured_content or {},
+        contribution_types=analysis.contribution_types or [],
+        score_scope=analysis.score_scope,
+        score_permanence=analysis.score_permanence,
+        score_cascade=analysis.score_cascade,
+        score_alignment=analysis.score_alignment,
+        score_specificity=analysis.score_specificity,
+        score_total=analysis.score_total,
+        ai_grade=analysis.ai_grade,
+        rationale=analysis.rationale or "",
+        missing_info=analysis.missing_info or [],
+        conflict_checks=[
+            DashboardConflictCheck(
+                risk_level=conflict_check.risk_level,
+                check_target=conflict_check.check_target,
+                passed=conflict_check.passed,
+                detail=conflict_check.detail or "",
+            )
+            for conflict_check in analysis.conflict_checks
+        ],
+        model_name=analysis.model_name or "",
+        created_at=analysis.created_at,
     )
 
 

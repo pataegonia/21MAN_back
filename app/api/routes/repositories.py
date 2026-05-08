@@ -14,6 +14,7 @@ from app.schemas.repositories import (
     PullRequestListItem,
     RecruitingAreaSlug,
     RepositoryCreateRequest,
+    RepositoryDashboardResponse,
     RepositoryDetailResponse,
     RepositoryListItem,
     RepositoryStatsResponse,
@@ -52,6 +53,15 @@ def list_repositories(
         page=page,
         size=size,
     )
+
+
+@router.get("/{repo_id}/dashboard", response_model=RepositoryDashboardResponse)
+def get_repository_dashboard(
+    repo_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RepositoryDashboardResponse:
+    return repo_service.get_repository_dashboard(db, repo_id, user=current_user)
 
 
 @router.get("/{repo_id}", response_model=RepositoryDetailResponse)
