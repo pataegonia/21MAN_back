@@ -31,31 +31,31 @@ PASSWORD = "Demo1234!"
 USERS = [
     {
         "username": "demo_author",
-        "email": "demo.author@worldbuild.local",
+        "email": "demo.author@worldbuild-demo.com",
         "avatar_url": "https://api.dicebear.com/8.x/adventurer/svg?seed=demo_author",
         "bio": "시연용 원작자 계정입니다. 별빛 기록관 세계관을 관리합니다.",
     },
     {
         "username": "demo_contributor",
-        "email": "demo.contributor@worldbuild.local",
+        "email": "demo.contributor@worldbuild-demo.com",
         "avatar_url": "https://api.dicebear.com/8.x/adventurer/svg?seed=demo_contributor",
         "bio": "시연용 컨트리뷰터 계정입니다. 다른 세계관에 PR을 보냅니다.",
     },
     {
         "username": "demo_archivist",
-        "email": "demo.archivist@worldbuild.local",
+        "email": "demo.archivist@worldbuild-demo.com",
         "avatar_url": "https://api.dicebear.com/8.x/adventurer/svg?seed=demo_archivist",
         "bio": "고대 문서와 잊힌 왕조를 다루는 더미 원작자입니다.",
     },
     {
         "username": "demo_neon",
-        "email": "demo.neon@worldbuild.local",
+        "email": "demo.neon@worldbuild-demo.com",
         "avatar_url": "https://api.dicebear.com/8.x/adventurer/svg?seed=demo_neon",
         "bio": "도시 판타지와 사이버 요괴물을 좋아하는 더미 원작자입니다.",
     },
     {
         "username": "demo_orbit",
-        "email": "demo.orbit@worldbuild.local",
+        "email": "demo.orbit@worldbuild-demo.com",
         "avatar_url": "https://api.dicebear.com/8.x/adventurer/svg?seed=demo_orbit",
         "bio": "우주 상인과 궤도 도시를 만드는 더미 원작자입니다.",
     },
@@ -235,6 +235,14 @@ def main() -> None:
         users = {data["username"]: upsert_user(db, data) for data in USERS}
         repos = [upsert_repo(db, spec, users) for spec in REPOS]
         db.commit()
+        user_summaries = [
+            (username, users[username].email, users[username].id)
+            for username in ("demo_author", "demo_contributor")
+        ]
+        repo_summaries = [
+            (repo.id, repo.slug, repo.title, repo.author_id)
+            for repo in repos
+        ]
     except Exception:
         db.rollback()
         raise
@@ -243,11 +251,10 @@ def main() -> None:
 
     print("Seed complete")
     print(f"Password for all seed accounts: {PASSWORD}")
-    for username in ("demo_author", "demo_contributor"):
-        user = users[username]
-        print(f"User: {username} / {user.email} / id={user.id}")
-    for repo in repos:
-        print(f"Repo: id={repo.id} slug={repo.slug} title={repo.title} author_id={repo.author_id}")
+    for username, email, user_id in user_summaries:
+        print(f"User: {username} / {email} / id={user_id}")
+    for repo_id, slug, title, author_id in repo_summaries:
+        print(f"Repo: id={repo_id} slug={slug} title={title} author_id={author_id}")
 
 
 if __name__ == "__main__":
