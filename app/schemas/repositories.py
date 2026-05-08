@@ -163,9 +163,10 @@ class RepositoryListItem(BaseModel):
     pr_count: int
     merge_count: int
     created_at: datetime
+    updated_at: datetime
 
-    @field_serializer("created_at")
-    def serialize_created_at(self, value: datetime) -> str:
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(self, value: datetime) -> str:
         return format_utc(value)
 
 

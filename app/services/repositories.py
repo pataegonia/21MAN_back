@@ -495,6 +495,7 @@ def _to_list_item(repo: Repository, pr_count: int, merge_count: int) -> Reposito
         pr_count=pr_count,
         merge_count=merge_count,
         created_at=repo.created_at,
+        updated_at=repo.updated_at,
     )
 
 
