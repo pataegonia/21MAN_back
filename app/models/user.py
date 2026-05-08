@@ -16,3 +16,4 @@ class User(TimestampMixin, Base):
 
     repositories = relationship("Repository", back_populates="author")
     pull_requests = relationship("PullRequest", back_populates="author")
+    refresh_tokens = relationship("RefreshToken", back_populates="user")

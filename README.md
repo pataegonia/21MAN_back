@@ -49,12 +49,38 @@ Important values:
 ```env
 APP_DEBUG=true
 DATABASE_URL=mysql+pymysql://worldbuild:worldbuild@localhost:3306/worldbuild
-JWT_SECRET_KEY=change-this-secret
-IP_HASH_SECRET=change-this-ip-secret
+JWT_SECRET=dev-change-this-jwt-secret-at-least-32-bytes
+JWT_ALGORITHM=HS256
+JWT_ISSUER=worldbuild
+JWT_AUDIENCE=worldbuild-api
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=14
+BCRYPT_ROUNDS=12
+IP_HASH_SECRET=dev-change-this-ip-secret-at-least-32-bytes
 OPENAI_API_KEY=
 ```
 
 `DEBUG` is intentionally not used because it often conflicts with system or shell-level variables.
+
+## Auth
+
+MVP auth uses JWT access tokens and opaque refresh tokens.
+
+- Access token: JWT HS256, 30 minutes
+- Refresh token: random opaque token, 14 days
+- Refresh tokens are stored only as SHA-256 hashes
+- Refresh rotates on every `/auth/refresh`
+- Reusing a revoked refresh token revokes the whole token family
+
+Endpoints:
+
+```text
+POST /api/v1/auth/register
+POST /api/v1/auth/login
+POST /api/v1/auth/refresh
+POST /api/v1/auth/logout
+GET  /api/v1/auth/me
+```
 
 ## Database
 
@@ -87,8 +113,10 @@ app/
     merge.py
     notification.py
     pull_request.py
+    refresh_token.py
     repository.py
     user.py
+  repositories/
   schemas/
   services/
   main.py
