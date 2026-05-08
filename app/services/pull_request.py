@@ -9,8 +9,9 @@ from app.core.exceptions import AppError
 from app.models.ai_analysis import AiAnalysis
 from app.models.audit_log import AuditLog
 from app.models.enums import ContributionGrade, PullRequestStatus, Visibility
+from app.models.merge import Merge
 from app.models.notification import Notification
-from app.models.pull_request import PullRequest
+from app.models.pull_request import PullRequest, RejectReason
 from app.repositories import pull_request as pr_repo
 
 
@@ -347,3 +348,238 @@ def list_prs(
         page=page,
         size=size,
     )
+
+
+# ---------------------------------------------------------------------------
+# PR 원작자 액션 (06-pull-requests-actions)
+# ---------------------------------------------------------------------------
+
+def _assert_repo_author(pr: PullRequest, user_id: int, action_msg: str) -> None:
+    if pr.repository.author_id != user_id:
+        raise AppError("FORBIDDEN", action_msg, status_code=403)
+
+
+def accept_pr(db: Session, *, pr_id: int, user_id: int, comment: str | None) -> PullRequest:
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 PR을 수락할 수 있습니다.")
+    if pr.status != PullRequestStatus.SUBMITTED:
+        raise AppError("INVALID_STATUS_TRANSITION", "SUBMITTED 상태의 PR만 수락할 수 있습니다.", status_code=400)
+
+    now = _now()
+    pr.status = PullRequestStatus.ACCEPTED
+    pr.reviewed_at = now
+    pr.author_review_comment = comment
+    db.add(Notification(
+        recipient_id=pr.author_id,
+        type="PR_ACCEPTED",
+        payload={"pull_request_id": pr_id},
+        created_at=now,
+    ))
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_ACCEPT",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(pr)
+    return pr
+
+
+def request_changes(
+    db: Session, *, pr_id: int, user_id: int, reason: str, comment: str | None
+) -> PullRequest:
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 수정을 요청할 수 있습니다.")
+    if pr.status != PullRequestStatus.SUBMITTED:
+        raise AppError("INVALID_STATUS_TRANSITION", "SUBMITTED 상태의 PR에만 수정을 요청할 수 있습니다.", status_code=400)
+
+    now = _now()
+    pr.status = PullRequestStatus.CHANGES_REQUESTED
+    pr.reviewed_at = now
+    pr.changes_requested_reason = reason
+    pr.author_review_comment = comment
+    db.add(Notification(
+        recipient_id=pr.author_id,
+        type="PR_CHANGES_REQUESTED",
+        payload={"pull_request_id": pr_id},
+        created_at=now,
+    ))
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_REQUEST_CHANGES",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(pr)
+    return pr
+
+
+def reject_pr(
+    db: Session, *, pr_id: int, user_id: int, category: str, detail: str
+) -> tuple[PullRequest, "RejectReason"]:
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 PR을 거절할 수 있습니다.")
+    if pr.status != PullRequestStatus.SUBMITTED:
+        raise AppError("INVALID_STATUS_TRANSITION", "SUBMITTED 상태의 PR만 거절할 수 있습니다.", status_code=400)
+
+    now = _now()
+    pr.status = PullRequestStatus.REJECTED
+    pr.reviewed_at = now
+    rr = pr_repo.create_reject_reason(db, pr_id=pr_id, category=category, detail=detail, created_by=user_id, now=now)
+    db.add(Notification(
+        recipient_id=pr.author_id,
+        type="PR_REJECTED",
+        payload={"pull_request_id": pr_id},
+        created_at=now,
+    ))
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_REJECT",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={"category": category},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(pr)
+    db.refresh(rr)
+    return pr, rr
+
+
+def merge_pr(
+    db: Session,
+    *,
+    pr_id: int,
+    user_id: int,
+    credit_text: str,
+    readme_apply_note: str | None,
+    comment: str | None,
+    final_grade: str | None,
+) -> Merge:
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 PR을 병합할 수 있습니다.")
+    if pr.status not in (PullRequestStatus.ACCEPTED, PullRequestStatus.SUBMITTED):
+        raise AppError(
+            "INVALID_STATUS_TRANSITION",
+            f"{pr.status} 상태의 PR은 병합할 수 없습니다.",
+            status_code=400,
+        )
+
+    if not final_grade:
+        if pr.author_grade_override:
+            final_grade = pr.author_grade_override
+        else:
+            latest = pr_repo.get_latest_ai_analysis(db, pr_id)
+            final_grade = latest.ai_grade if latest else ContributionGrade.NORMAL
+
+    now = _now()
+    pr.status = PullRequestStatus.MERGED
+    pr.merged_at = now
+
+    m = pr_repo.create_merge(
+        db,
+        pr_id=pr_id,
+        repo_id=pr.repository_id,
+        contributor_id=pr.author_id,
+        author_id=user_id,
+        final_grade=final_grade,
+        credit_text=credit_text,
+        readme_apply_note=readme_apply_note,
+        comment=comment,
+        merged_at=now,
+    )
+    m.citation_url = f"{settings.site_url}/m/{m.id}"
+
+    db.add(Notification(
+        recipient_id=pr.author_id,
+        type="PR_MERGED",
+        payload={"pull_request_id": pr_id, "merge_id": m.id},
+        created_at=now,
+    ))
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_MERGE",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={"final_grade": final_grade},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(m)
+    return m
+
+
+def grade_override(
+    db: Session, *, pr_id: int, user_id: int, grade: str, reason: str | None
+) -> PullRequest:
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 등급을 조정할 수 있습니다.")
+
+    latest = pr_repo.get_latest_ai_analysis(db, pr_id)
+    if latest and latest.ai_grade != grade and not reason:
+        raise AppError("VALIDATION_ERROR", "AI 등급과 다른 경우 조정 사유를 입력해야 합니다.", status_code=422)
+
+    now = _now()
+    pr.author_grade_override = grade
+    pr.author_grade_override_reason = reason
+    db.add(Notification(
+        recipient_id=pr.author_id,
+        type="GRADE_ADJUSTED",
+        payload={"pull_request_id": pr_id, "grade": grade},
+        created_at=now,
+    ))
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_GRADE_OVERRIDE",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={"grade": grade},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(pr)
+    return pr
+
+
+def update_reject_reason(
+    db: Session, *, pr_id: int, user_id: int, category: str, detail: str
+) -> "RejectReason":
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
+    if pr is None:
+        raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
+    _assert_repo_author(pr, user_id, "원작자만 거절 사유를 수정할 수 있습니다.")
+    if pr.status != PullRequestStatus.REJECTED:
+        raise AppError("PR_NOT_REJECTED", "REJECTED 상태의 PR에만 거절 사유를 수정할 수 있습니다.", status_code=400)
+
+    now = _now()
+    old_rr = pr_repo.get_active_reject_reason_by_pr_id(db, pr_id)
+    new_rr = pr_repo.create_reject_reason(db, pr_id=pr_id, category=category, detail=detail, created_by=user_id, now=now)
+    if old_rr:
+        pr_repo.supersede_reject_reason(db, old_rr, new_rr.id, now)
+    db.add(AuditLog(
+        actor_id=user_id,
+        action_type="PR_UPDATE_REJECT_REASON",
+        target_type="pull_request",
+        target_id=pr_id,
+        payload={"category": category},
+        created_at=now,
+    ))
+    db.commit()
+    db.refresh(new_rr)
+    return new_rr

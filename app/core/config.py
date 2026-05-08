@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     bcrypt_rounds: int = 12
     ip_hash_secret: str = "dev-change-this-ip-secret-at-least-32-bytes"
     openai_api_key: str | None = None
+    site_url: str = "https://worldbuild.example.com"
 
     @property
     def access_token_expires_in(self) -> int:

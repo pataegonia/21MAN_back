@@ -8,14 +8,20 @@ from app.db.session import get_db
 from app.models.user import User
 from app.repositories import pull_request as pr_repo
 from app.schemas.pull_request import (
+    AcceptPRRequest,
+    AcceptPRResponse,
     AiAnalysisResponse,
     ConflictCheckItem,
     ContributorCommentRequest,
     ContributorCommentResponse,
     CreateDraftResponse,
     DraftResponse,
+    GradeOverrideRequest,
+    GradeOverrideResponse,
     LatestAiAnalysisSummary,
     MergeInfo,
+    MergePRRequest,
+    MergePRResponse,
     PRDetailAuthor,
     PRDetailRepository,
     PRDetailRepositoryAuthor,
@@ -23,12 +29,19 @@ from app.schemas.pull_request import (
     PRListAuthor,
     PRListItem,
     PRListResponse,
+    RejectPRRequest,
+    RejectPRResponse,
+    RejectReasonDetail,
     RejectReasonInfo,
     RepositoryInfo,
+    RequestChangesRequest,
+    RequestChangesResponse,
     SaveDraftRequest,
     SaveDraftResponse,
     SubmitPRRequest,
     SubmitPRResponse,
+    UpdateRejectReasonRequest,
+    UpdateRejectReasonResponse,
     ViewLogSummary,
 )
 from app.services import pull_request as pr_service
@@ -273,6 +286,116 @@ def list_prs(
         for pr, analysis in rows
     ]
     return PRListResponse(items=items, total=total, page=page, size=size)
+
+
+# ---------------------------------------------------------------------------
+# PR 원작자 액션 (06-pull-requests-actions)
+# ---------------------------------------------------------------------------
+
+@router.post("/pull-requests/{pr_id}/accept", response_model=AcceptPRResponse)
+def accept_pr(
+    pr_id: int,
+    payload: AcceptPRRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AcceptPRResponse:
+    pr = pr_service.accept_pr(db, pr_id=pr_id, user_id=current_user.id, comment=payload.comment)
+    return AcceptPRResponse(pull_request_id=pr.id, status=pr.status, reviewed_at=pr.reviewed_at)
+
+
+@router.post("/pull-requests/{pr_id}/request-changes", response_model=RequestChangesResponse)
+def request_changes(
+    pr_id: int,
+    payload: RequestChangesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RequestChangesResponse:
+    pr = pr_service.request_changes(
+        db, pr_id=pr_id, user_id=current_user.id, reason=payload.reason, comment=payload.comment
+    )
+    return RequestChangesResponse(pull_request_id=pr.id, status=pr.status, reviewed_at=pr.reviewed_at)
+
+
+@router.post("/pull-requests/{pr_id}/reject", response_model=RejectPRResponse)
+def reject_pr(
+    pr_id: int,
+    payload: RejectPRRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RejectPRResponse:
+    pr, rr = pr_service.reject_pr(
+        db, pr_id=pr_id, user_id=current_user.id, category=payload.category, detail=payload.detail
+    )
+    return RejectPRResponse(
+        pull_request_id=pr.id,
+        status=pr.status,
+        reject_reason=RejectReasonInfo(id=rr.id, category=rr.category, detail=rr.detail, created_at=rr.created_at),
+        reviewed_at=pr.reviewed_at,
+    )
+
+
+@router.post("/pull-requests/{pr_id}/merge", response_model=MergePRResponse)
+def merge_pr(
+    pr_id: int,
+    payload: MergePRRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MergePRResponse:
+    m = pr_service.merge_pr(
+        db,
+        pr_id=pr_id,
+        user_id=current_user.id,
+        credit_text=payload.credit_text,
+        readme_apply_note=payload.readme_apply_note,
+        comment=payload.comment,
+        final_grade=payload.final_grade,
+    )
+    return MergePRResponse(
+        merge_id=m.id,
+        pull_request_id=m.pull_request_id,
+        status="MERGED",
+        final_grade=m.final_grade,
+        citation_url=m.citation_url,
+        merged_at=m.merged_at,
+    )
+
+
+@router.post("/pull-requests/{pr_id}/grade-override", response_model=GradeOverrideResponse)
+def grade_override(
+    pr_id: int,
+    payload: GradeOverrideRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> GradeOverrideResponse:
+    pr = pr_service.grade_override(
+        db, pr_id=pr_id, user_id=current_user.id, grade=payload.grade, reason=payload.reason
+    )
+    return GradeOverrideResponse(
+        pull_request_id=pr.id,
+        author_grade_override=pr.author_grade_override,
+        author_grade_override_reason=pr.author_grade_override_reason,
+    )
+
+
+@router.patch("/pull-requests/{pr_id}/reject-reason", response_model=UpdateRejectReasonResponse)
+def update_reject_reason(
+    pr_id: int,
+    payload: UpdateRejectReasonRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UpdateRejectReasonResponse:
+    rr = pr_service.update_reject_reason(
+        db, pr_id=pr_id, user_id=current_user.id, category=payload.category, detail=payload.detail
+    )
+    return UpdateRejectReasonResponse(
+        reject_reason=RejectReasonDetail(
+            id=rr.id,
+            category=rr.category,
+            detail=rr.detail,
+            superseded_by_id=rr.superseded_by_id,
+            created_at=rr.created_at,
+        )
+    )
 
 
 def _to_analysis_response(analysis) -> AiAnalysisResponse:

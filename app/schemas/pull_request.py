@@ -197,3 +197,84 @@ class PRListResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+# ---------------------------------------------------------------------------
+# PR 원작자 액션 (06-pull-requests-actions)
+# ---------------------------------------------------------------------------
+
+class AcceptPRRequest(BaseModel):
+    comment: str | None = None
+
+
+class AcceptPRResponse(BaseModel):
+    pull_request_id: int
+    status: str
+    reviewed_at: datetime
+
+
+class RequestChangesRequest(BaseModel):
+    reason: str
+    comment: str | None = None
+
+
+class RequestChangesResponse(BaseModel):
+    pull_request_id: int
+    status: str
+    reviewed_at: datetime
+
+
+class RejectPRRequest(BaseModel):
+    category: str
+    detail: str
+
+
+class RejectPRResponse(BaseModel):
+    pull_request_id: int
+    status: str
+    reject_reason: RejectReasonInfo
+    reviewed_at: datetime
+
+
+class MergePRRequest(BaseModel):
+    credit_text: str
+    readme_apply_note: str | None = None
+    comment: str | None = None
+    final_grade: str | None = None
+
+
+class MergePRResponse(BaseModel):
+    merge_id: int
+    pull_request_id: int
+    status: str
+    final_grade: str
+    citation_url: str
+    merged_at: datetime
+
+
+class GradeOverrideRequest(BaseModel):
+    grade: str
+    reason: str | None = None
+
+
+class GradeOverrideResponse(BaseModel):
+    pull_request_id: int
+    author_grade_override: str
+    author_grade_override_reason: str | None
+
+
+class UpdateRejectReasonRequest(BaseModel):
+    category: str
+    detail: str
+
+
+class RejectReasonDetail(BaseModel):
+    id: int
+    category: str
+    detail: str
+    superseded_by_id: int | None
+    created_at: datetime
+
+
+class UpdateRejectReasonResponse(BaseModel):
+    reject_reason: RejectReasonDetail

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, aliased, contains_eager, joinedload, subquer
 
 from app.models.ai_analysis import AiAnalysis, ConflictCheck
 from app.models.audit_log import AuditLog
+from app.models.merge import Merge
 from app.models.pull_request import PullRequest, RejectReason, ViewLog
 from app.models.repository import Repository
 from app.models.user import User
@@ -205,6 +206,71 @@ def list_prs(
     )
     rows = db.execute(rows_stmt).all()
     return [(row[0], row[1]) for row in rows], total
+
+
+def create_reject_reason(
+    db: Session,
+    *,
+    pr_id: int,
+    category: str,
+    detail: str,
+    created_by: int,
+    now: datetime,
+) -> RejectReason:
+    rr = RejectReason(
+        pull_request_id=pr_id,
+        category=category,
+        detail=detail,
+        created_by=created_by,
+        created_at=now,
+    )
+    db.add(rr)
+    db.flush()
+    return rr
+
+
+def get_active_reject_reason_by_pr_id(db: Session, pr_id: int) -> RejectReason | None:
+    stmt = (
+        select(RejectReason)
+        .where(RejectReason.pull_request_id == pr_id, RejectReason.superseded_at == None)
+        .limit(1)
+    )
+    return db.scalar(stmt)
+
+
+def supersede_reject_reason(db: Session, rr: RejectReason, new_id: int, now: datetime) -> None:
+    rr.superseded_by_id = new_id
+    rr.superseded_at = now
+
+
+def create_merge(
+    db: Session,
+    *,
+    pr_id: int,
+    repo_id: int,
+    contributor_id: int,
+    author_id: int,
+    final_grade: str,
+    credit_text: str,
+    readme_apply_note: str | None,
+    comment: str | None,
+    merged_at: datetime,
+) -> Merge:
+    m = Merge(
+        pull_request_id=pr_id,
+        repository_id=repo_id,
+        contributor_id=contributor_id,
+        author_id=author_id,
+        final_grade=final_grade,
+        credit_text=credit_text,
+        readme_apply_note=readme_apply_note,
+        author_comment=comment,
+        citation_url="",
+        merged_at=merged_at,
+    )
+    db.add(m)
+    db.flush()
+    return m
 
 
 def create_ai_analysis(
