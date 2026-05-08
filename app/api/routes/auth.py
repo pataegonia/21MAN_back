@@ -4,14 +4,14 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import AuthResponse, LoginRequest, LogoutRequest, RefreshRequest, RefreshResponse, RegisterRequest, UserResponse
+from app.schemas.auth import AccessTokenResponse, LoginRequest, LogoutRequest, RefreshRequest, RegisterRequest, RegisterResponse, TokenPairResponse, UserResponse
 from app.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> AuthResponse:
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)) -> User:
     return auth_service.register_user(
         db,
         email=str(payload.email),
@@ -22,8 +22,8 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     )
 
 
-@router.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> AuthResponse:
+@router.post("/login", response_model=TokenPairResponse)
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenPairResponse:
     return auth_service.login_user(
         db,
         email=str(payload.email),
@@ -33,8 +33,8 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     )
 
 
-@router.post("/refresh", response_model=RefreshResponse)
-def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get_db)) -> RefreshResponse:
+@router.post("/refresh", response_model=AccessTokenResponse)
+def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get_db)) -> AccessTokenResponse:
     return auth_service.refresh_tokens(
         db,
         raw_refresh_token=payload.refresh_token,

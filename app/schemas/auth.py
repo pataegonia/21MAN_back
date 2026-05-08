@@ -1,9 +1,13 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
-USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]+$")
+
+
+def format_utc(value: datetime) -> str:
+    return value.isoformat().removesuffix("+00:00") + "Z"
 
 
 class RegisterRequest(BaseModel):
@@ -16,15 +20,13 @@ class RegisterRequest(BaseModel):
     def validate_password(cls, value: str) -> str:
         if len(value.encode("utf-8")) > 72:
             raise ValueError("Password must be 72 bytes or fewer")
-        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
-            raise ValueError("Password must contain at least one letter and one number")
         return value
 
     @field_validator("username")
     @classmethod
     def validate_username(cls, value: str) -> str:
         if not USERNAME_PATTERN.fullmatch(value):
-            raise ValueError("Username can contain only letters, numbers, underscores, and hyphens")
+            raise ValueError("Username can contain only letters, numbers, and underscores")
         return value
 
 
@@ -54,23 +56,36 @@ class UserResponse(BaseModel):
     id: int
     email: str
     username: str
-    avatar_url: str | None
+    avatar: str | None = Field(validation_alias="avatar_url")
     bio: str | None
     created_at: datetime | None = None
 
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return format_utc(value)
 
-class AuthResponse(BaseModel):
-    user: UserResponse
+
+class RegisterResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    username: str
+    created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime) -> str:
+        return format_utc(value)
+
+
+class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int
 
 
-class RefreshResponse(BaseModel):
+class AccessTokenResponse(BaseModel):
     access_token: str
-    refresh_token: str
     token_type: str = "Bearer"
-    access_expires_in: int
-    refresh_expires_in: int

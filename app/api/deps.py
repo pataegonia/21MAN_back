@@ -16,19 +16,19 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise AppError("INVALID_TOKEN", "Missing access token", status_code=401)
+        raise AppError("UNAUTHORIZED", "Authentication is required", status_code=401)
 
     try:
         payload = decode_access_token(credentials.credentials)
         user_id = int(payload["sub"])
     except AccessTokenExpiredError as exc:
-        raise AppError("EXPIRED_TOKEN", "Access token has expired", status_code=401) from exc
+        raise AppError("UNAUTHORIZED", "Authentication is required", status_code=401) from exc
     except (AccessTokenInvalidError, KeyError, TypeError, ValueError) as exc:
-        raise AppError("INVALID_TOKEN", "Invalid access token", status_code=401) from exc
+        raise AppError("UNAUTHORIZED", "Authentication is required", status_code=401) from exc
 
     user = get_user_by_id(db, user_id)
     if user is None:
-        raise AppError("INVALID_TOKEN", "Invalid access token", status_code=401)
+        raise AppError("UNAUTHORIZED", "Authentication is required", status_code=401)
     return user
 
 

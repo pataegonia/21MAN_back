@@ -31,15 +31,15 @@ async def validation_error_handler(_: Request, exc: RequestValidationError) -> J
     details = [
         {
             "field": ".".join(str(part) for part in error["loc"] if part != "body"),
-            "msg": error["msg"],
+            "message": error["msg"],
         }
         for error in exc.errors()
     ]
     return JSONResponse(
-        status_code=400,
+        status_code=422,
         content={
             "error": {
-                "code": "VALIDATION_FAILED",
+                "code": "VALIDATION_ERROR",
                 "message": "Request validation failed",
                 "details": details,
             }
