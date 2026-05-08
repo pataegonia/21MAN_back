@@ -56,7 +56,7 @@ class UserResponse(BaseModel):
     id: int
     email: str
     username: str
-    avatar: str | None = Field(validation_alias="avatar_url")
+    avatar_url: str | None
     bio: str | None
     created_at: datetime | None = None
 
