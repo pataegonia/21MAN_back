@@ -1,12 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy.orm import Session, aliased, contains_eager, joinedload, subqueryload
 
 from app.models.ai_analysis import AiAnalysis, ConflictCheck
-from app.models.pull_request import PullRequest
+from app.models.audit_log import AuditLog
+from app.models.pull_request import PullRequest, RejectReason, ViewLog
 from app.models.repository import Repository
-from app.models.enums import PullRequestStatus
+from app.models.user import User
+from app.models.enums import PullRequestStatus, Visibility
 
 
 def get_repository_by_id(db: Session, repo_id: int) -> Repository | None:
@@ -72,6 +74,137 @@ def get_next_run_seq(db: Session, pr_id: int) -> int:
     stmt = select(func.max(AiAnalysis.run_seq)).where(AiAnalysis.pull_request_id == pr_id)
     current_max = db.scalar(stmt)
     return (current_max or 0) + 1
+
+
+def get_pr_for_detail(db: Session, pr_id: int) -> PullRequest | None:
+    stmt = (
+        select(PullRequest)
+        .options(
+            joinedload(PullRequest.repository).joinedload(Repository.author),
+            joinedload(PullRequest.author),
+            joinedload(PullRequest.merge),
+            subqueryload(PullRequest.view_logs),
+            subqueryload(PullRequest.analyses),
+            subqueryload(PullRequest.reject_reasons),
+        )
+        .where(PullRequest.id == pr_id)
+    )
+    return db.scalar(stmt)
+
+
+def get_active_reject_reason(pr: PullRequest) -> RejectReason | None:
+    for rr in pr.reject_reasons:
+        if rr.superseded_at is None:
+            return rr
+    return None
+
+
+def create_view_log(
+    db: Session,
+    *,
+    pr_id: int,
+    viewer_id: int,
+    ip_hash: str,
+    day_bucket_hash: str,
+    now: datetime,
+) -> ViewLog:
+    vl = ViewLog(
+        pull_request_id=pr_id,
+        viewer_id=viewer_id,
+        ip_hash=ip_hash,
+        day_bucket_hash=day_bucket_hash,
+        viewed_at=now,
+    )
+    db.add(vl)
+    db.flush()
+    return vl
+
+
+def list_prs(
+    db: Session,
+    *,
+    repo_id: int | None,
+    author_username: str | None,
+    statuses: list[str],
+    contribution_type: str | None,
+    grade: str | None,
+    current_user_id: int | None,
+    page: int,
+    size: int,
+) -> tuple[list[tuple[PullRequest, AiAnalysis | None]], int]:
+    latest_seq_sq = (
+        select(func.max(AiAnalysis.run_seq))
+        .where(AiAnalysis.pull_request_id == PullRequest.id)
+        .correlate(PullRequest)
+        .scalar_subquery()
+    )
+    LatestAnalysis = aliased(AiAnalysis)
+
+    base = (
+        select(PullRequest, LatestAnalysis)
+        .outerjoin(
+            LatestAnalysis,
+            and_(
+                LatestAnalysis.pull_request_id == PullRequest.id,
+                LatestAnalysis.run_seq == latest_seq_sq,
+            ),
+        )
+        .options(
+            joinedload(PullRequest.repository),
+            joinedload(PullRequest.author),
+        )
+    )
+
+    # 접근 제어: PUBLIC 또는 본인 PRIVATE
+    if current_user_id is not None:
+        base = base.where(
+            or_(
+                PullRequest.visibility == Visibility.PUBLIC,
+                and_(
+                    PullRequest.visibility == Visibility.PRIVATE,
+                    PullRequest.author_id == current_user_id,
+                ),
+            )
+        )
+    else:
+        base = base.where(PullRequest.visibility == Visibility.PUBLIC)
+
+    # DRAFT 제외 (목록은 제출 이후만)
+    base = base.where(PullRequest.status != PullRequestStatus.DRAFT)
+
+    if repo_id is not None:
+        base = base.where(PullRequest.repository_id == repo_id)
+
+    if author_username:
+        AuthorUser = aliased(User)
+        base = base.join(AuthorUser, PullRequest.author_id == AuthorUser.id).where(
+            AuthorUser.username == author_username
+        )
+
+    if statuses:
+        base = base.where(PullRequest.status.in_(statuses))
+
+    if contribution_type:
+        base = base.where(
+            text("JSON_CONTAINS(pull_requests.contribution_types, :val)").bindparams(
+                val=f'"{contribution_type}"'
+            )
+        )
+
+    if grade:
+        base = base.where(LatestAnalysis.ai_grade == grade)
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = db.scalar(count_stmt) or 0
+
+    rows_stmt = (
+        base
+        .order_by(PullRequest.submitted_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = db.execute(rows_stmt).all()
+    return [(row[0], row[1]) for row in rows], total
 
 
 def create_ai_analysis(

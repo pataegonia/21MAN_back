@@ -107,3 +107,93 @@ class ContributorCommentResponse(BaseModel):
 
     pull_request_id: int
     contributor_comment: str
+
+
+# ---------------------------------------------------------------------------
+# PR 조회 (05-pull-requests-query)
+# ---------------------------------------------------------------------------
+
+class PRDetailRepositoryAuthor(BaseModel):
+    username: str
+
+
+class PRDetailRepository(BaseModel):
+    id: int
+    title: str
+    author: PRDetailRepositoryAuthor
+
+
+class PRDetailAuthor(BaseModel):
+    id: int
+    username: str
+    avatar: str | None
+
+
+class RejectReasonInfo(BaseModel):
+    id: int
+    category: str
+    detail: str
+    created_at: datetime
+
+
+class MergeInfo(BaseModel):
+    id: int
+    final_grade: str
+    credit_text: str
+    author_comment: str | None
+    citation_url: str
+    merged_at: datetime
+
+
+class ViewLogSummary(BaseModel):
+    total_views: int
+    first_viewed_at: datetime | None
+
+
+class PRDetailResponse(BaseModel):
+    id: int
+    repository: PRDetailRepository
+    author: PRDetailAuthor
+    title: str | None
+    raw_content: str | None
+    contribution_types: list[str]
+    visibility: str
+    status: str
+    contributor_comment: str | None
+    author_grade_override: str | None
+    author_grade_override_reason: str | None
+    author_review_comment: str | None
+    changes_requested_reason: str | None
+    reject_reason: RejectReasonInfo | None
+    merge_info: MergeInfo | None
+    view_log_summary: ViewLogSummary | None
+    first_drafted_at: datetime
+    submitted_at: datetime | None
+    reviewed_at: datetime | None
+    merged_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PRListAuthor(BaseModel):
+    username: str
+    avatar: str | None
+
+
+class PRListItem(BaseModel):
+    id: int
+    repository: RepositoryInfo
+    author: PRListAuthor
+    title: str | None
+    status: str
+    visibility: str
+    contribution_types: list[str]
+    ai_grade: str | None
+    submitted_at: datetime | None
+
+
+class PRListResponse(BaseModel):
+    items: list[PRListItem]
+    total: int
+    page: int
+    size: int

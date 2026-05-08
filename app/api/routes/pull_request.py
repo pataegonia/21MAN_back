@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, Response, status
+import hashlib
+
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.user import User
+from app.repositories import pull_request as pr_repo
 from app.schemas.pull_request import (
     AiAnalysisResponse,
     ConflictCheckItem,
@@ -12,11 +15,21 @@ from app.schemas.pull_request import (
     CreateDraftResponse,
     DraftResponse,
     LatestAiAnalysisSummary,
+    MergeInfo,
+    PRDetailAuthor,
+    PRDetailRepository,
+    PRDetailRepositoryAuthor,
+    PRDetailResponse,
+    PRListAuthor,
+    PRListItem,
+    PRListResponse,
+    RejectReasonInfo,
     RepositoryInfo,
     SaveDraftRequest,
     SaveDraftResponse,
     SubmitPRRequest,
     SubmitPRResponse,
+    ViewLogSummary,
 )
 from app.services import pull_request as pr_service
 
@@ -139,6 +152,127 @@ def save_contributor_comment(
         pull_request_id=pr.id,
         contributor_comment=pr.contributor_comment,
     )
+
+
+@router.get("/pull-requests/{pr_id}", response_model=PRDetailResponse)
+def get_pr_detail(
+    pr_id: int,
+    request: Request,
+    current_user: User | None = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> PRDetailResponse:
+    client_ip = (request.client.host if request.client else None) or "unknown"
+    ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()
+    current_user_id = current_user.id if current_user else None
+
+    pr, is_owner = pr_service.get_pr_detail(
+        db, pr_id=pr_id, current_user_id=current_user_id, ip_hash=ip_hash
+    )
+
+    latest = max(pr.analyses, key=lambda a: a.run_seq) if pr.analyses else None
+    active_reject = pr_repo.get_active_reject_reason(pr)
+
+    view_log_summary = None
+    if is_owner and pr.view_logs:
+        view_log_summary = ViewLogSummary(
+            total_views=len(pr.view_logs),
+            first_viewed_at=min(vl.viewed_at for vl in pr.view_logs),
+        )
+
+    reject_reason_info = None
+    if active_reject:
+        reject_reason_info = RejectReasonInfo(
+            id=active_reject.id,
+            category=active_reject.category,
+            detail=active_reject.detail,
+            created_at=active_reject.created_at,
+        )
+
+    merge_info = None
+    if pr.merge:
+        m = pr.merge
+        merge_info = MergeInfo(
+            id=m.id,
+            final_grade=m.final_grade,
+            credit_text=m.credit_text,
+            author_comment=m.author_comment,
+            citation_url=m.citation_url,
+            merged_at=m.merged_at,
+        )
+
+    return PRDetailResponse(
+        id=pr.id,
+        repository=PRDetailRepository(
+            id=pr.repository.id,
+            title=pr.repository.title,
+            author=PRDetailRepositoryAuthor(username=pr.repository.author.username),
+        ),
+        author=PRDetailAuthor(
+            id=pr.author.id,
+            username=pr.author.username,
+            avatar=pr.author.avatar_url,
+        ),
+        title=latest.generated_title if latest else None,
+        raw_content=pr.raw_content,
+        contribution_types=latest.contribution_types or [] if latest else [],
+        visibility=pr.visibility,
+        status=pr.status,
+        contributor_comment=pr.contributor_comment,
+        author_grade_override=pr.author_grade_override,
+        author_grade_override_reason=pr.author_grade_override_reason,
+        author_review_comment=pr.author_review_comment,
+        changes_requested_reason=pr.changes_requested_reason,
+        reject_reason=reject_reason_info,
+        merge_info=merge_info,
+        view_log_summary=view_log_summary,
+        first_drafted_at=pr.first_drafted_at,
+        submitted_at=pr.submitted_at,
+        reviewed_at=pr.reviewed_at,
+        merged_at=pr.merged_at,
+        created_at=pr.created_at,
+        updated_at=pr.updated_at,
+    )
+
+
+@router.get("/pull-requests", response_model=PRListResponse)
+def list_prs(
+    repo_id: int | None = None,
+    author: str | None = None,
+    status: list[str] = Query(default=[]),
+    type: str | None = None,
+    grade: str | None = None,
+    page: int = 1,
+    size: int = 20,
+    current_user: User | None = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> PRListResponse:
+    current_user_id = current_user.id if current_user else None
+    rows, total = pr_service.list_prs(
+        db,
+        repo_id=repo_id,
+        author_username=author,
+        statuses=status,
+        contribution_type=type,
+        grade=grade,
+        current_user_id=current_user_id,
+        page=page,
+        size=size,
+    )
+    items = [
+        PRListItem(
+            id=pr.id,
+            repository=RepositoryInfo(id=pr.repository.id, title=pr.repository.title),
+            author=PRListAuthor(username=pr.author.username, avatar=pr.author.avatar_url),
+            title=analysis.generated_title if analysis else None,
+            status=pr.status,
+            visibility=pr.visibility,
+            contribution_types=analysis.contribution_types or [] if analysis else [],
+            ai_grade=analysis.ai_grade if analysis else None,
+            submitted_at=pr.submitted_at,
+        )
+        for pr, analysis in rows
+    ]
+    return PRListResponse(items=items, total=total, page=page, size=size)
 
 
 def _to_analysis_response(analysis) -> AiAnalysisResponse:
