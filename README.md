@@ -20,7 +20,7 @@
 
 서랍는 창작 IP를 위한 GitHub 같은 협업 플랫폼입니다.
 
-개발자가 Repository와 Pull Request로 코드를 협업하듯, 창작자는 WorldBuild에서 작품 Repository를 만들고 외부 기여자는 캐릭터, 설정, 사건, 장소 아이디어를 PR로 제안합니다. 원작자는 AI 분석 결과와 충돌 가능성을 참고해 제안을 수락, 수정 요청, 거절, 병합할 수 있습니다.
+개발자가 Repository와 Pull Request로 코드를 협업하듯, 창작자는 서랍에서 작품 Repository를 만들고 외부 기여자는 캐릭터, 설정, 사건, 장소 아이디어를 PR로 제안합니다. 원작자는 AI 분석 결과와 충돌 가능성을 참고해 제안을 수락, 수정 요청, 거절, 병합할 수 있습니다.
 
 핵심은 단순 아이디어 게시판이 아니라, 창작 시점과 열람 기록, 거절 사유, 병합 이력을 남기는 신뢰 가능한 협업 흐름입니다.
 
@@ -209,7 +209,7 @@ scripts/
 
 ## Trust & Safety Model
 
-WorldBuild는 창작 협업에서 생길 수 있는 분쟁을 줄이기 위해 기록 중심으로 설계되어 있습니다.
+서랍은 창작 협업에서 생길 수 있는 분쟁을 줄이기 위해 기록 중심으로 설계되어 있습니다.
 
 | Record | Purpose |
 |---|---|
@@ -240,5 +240,5 @@ WorldBuild는 창작 협업에서 생길 수 있는 분쟁을 줄이기 위해 �
 ---
 
 <p align="center">
-  WorldBuild turns creative ideas into reviewable, creditable contributions.
+  서랍 turns creative ideas into reviewable, creditable contributions.
 </p>
