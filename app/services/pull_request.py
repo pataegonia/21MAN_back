@@ -479,12 +479,15 @@ def merge_pr(
             status_code=400,
         )
 
+    latest = pr_repo.get_latest_ai_analysis(db, pr_id)
+    if latest is None:
+        raise AppError("AI_ANALYSIS_REQUIRED", "PR 병합 전 AI 분석이 필요합니다.", status_code=400)
+
     if not final_grade:
         if pr.author_grade_override:
             final_grade = pr.author_grade_override
         else:
-            latest = pr_repo.get_latest_ai_analysis(db, pr_id)
-            final_grade = latest.ai_grade if latest else ContributionGrade.NORMAL
+            final_grade = latest.ai_grade
 
     now = _now()
     pr.status = PullRequestStatus.MERGED
