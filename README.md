@@ -10,11 +10,23 @@ KHU 21MAN backend repository.
 
 ## Getting Started
 
+**Windows**
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
+uvicorn app.main:app --reload
+```
+
+**WSL / Linux / macOS**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
