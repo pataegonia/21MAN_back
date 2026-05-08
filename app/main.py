@@ -21,8 +21,15 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix=settings.api_prefix)
 
+    @app.get("/")
+    def root() -> dict[str, str]:
+        return {
+            "message": "21MAN API is running",
+            "docs": "/docs",
+            "health": f"{settings.api_prefix}/health",
+        }
+
     return app
 
 
 app = create_app()
-
