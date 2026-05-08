@@ -19,6 +19,33 @@ def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def _add_pr_notification(
+    db: Session,
+    *,
+    recipient_id: int,
+    notification_type: str,
+    pr: PullRequest,
+    actor_id: int,
+    now: datetime,
+    extra_payload: dict | None = None,
+) -> None:
+    payload = {
+        "pr_id": pr.id,
+        "pr_title": pr.title,
+        "repo_id": pr.repository_id,
+        "repo_title": pr.repository.title if pr.repository else None,
+        "actor_id": actor_id,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    db.add(Notification(
+        recipient_id=recipient_id,
+        type=notification_type,
+        payload=payload,
+        created_at=now,
+    ))
+
+
 # ---------------------------------------------------------------------------
 # Draft CRUD
 # ---------------------------------------------------------------------------
@@ -231,21 +258,24 @@ def submit_pr(db: Session, *, pr_id: int, user_id: int, visibility: str) -> Pull
         raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
     if pr.author_id != user_id:
         raise AppError("FORBIDDEN", "본인의 PR만 제출할 수 있습니다.", status_code=403)
-    if pr.status != PullRequestStatus.DRAFT:
-        raise AppError("INVALID_STATUS_TRANSITION", "DRAFT 상태의 PR만 제출할 수 있습니다.", status_code=400)
+    if pr.status not in (PullRequestStatus.DRAFT, PullRequestStatus.CHANGES_REQUESTED):
+        raise AppError("INVALID_STATUS_TRANSITION", "DRAFT 또는 CHANGES_REQUESTED 상태의 PR만 제출할 수 있습니다.", status_code=400)
 
     now = _now()
+    previous_status = pr.status
     pr.status = PullRequestStatus.SUBMITTED
     pr.submitted_at = now
     pr.visibility = Visibility(visibility)
 
     repo = pr.repository
-    db.add(Notification(
+    _add_pr_notification(
+        db,
         recipient_id=repo.author_id,
-        type="PR_SUBMITTED",
-        payload={"pull_request_id": pr_id, "contributor_id": user_id},
-        created_at=now,
-    ))
+        notification_type="PR_RESUBMITTED" if previous_status == PullRequestStatus.CHANGES_REQUESTED else "PR_SUBMITTED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_SUBMIT",
@@ -261,13 +291,22 @@ def submit_pr(db: Session, *, pr_id: int, user_id: int, visibility: str) -> Pull
 
 
 def save_contributor_comment(db: Session, *, pr_id: int, user_id: int, comment: str) -> PullRequest:
-    pr = pr_repo.get_pr_by_id(db, pr_id)
+    pr = pr_repo.get_pr_with_repository(db, pr_id)
     if pr is None:
         raise AppError("PR_NOT_FOUND", "존재하지 않는 PR입니다.", status_code=404)
     if pr.author_id != user_id:
         raise AppError("FORBIDDEN", "본인의 PR에만 의견을 작성할 수 있습니다.", status_code=403)
 
+    now = _now()
     pr.contributor_comment = comment
+    _add_pr_notification(
+        db,
+        recipient_id=pr.repository.author_id,
+        notification_type="PR_COMMENT_ADDED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+    )
     db.commit()
     db.refresh(pr)
     return pr
@@ -371,12 +410,15 @@ def accept_pr(db: Session, *, pr_id: int, user_id: int, comment: str | None) -> 
     pr.status = PullRequestStatus.ACCEPTED
     pr.reviewed_at = now
     pr.author_review_comment = comment
-    db.add(Notification(
+    _add_pr_notification(
+        db,
         recipient_id=pr.author_id,
-        type="PR_ACCEPTED",
-        payload={"pull_request_id": pr_id},
-        created_at=now,
-    ))
+        notification_type="PR_ACCEPTED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+        extra_payload={"comment": comment} if comment else None,
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_ACCEPT",
@@ -405,12 +447,18 @@ def request_changes(
     pr.reviewed_at = now
     pr.changes_requested_reason = reason
     pr.author_review_comment = comment
-    db.add(Notification(
+    extra_payload = {"reason": reason}
+    if comment:
+        extra_payload["comment"] = comment
+    _add_pr_notification(
+        db,
         recipient_id=pr.author_id,
-        type="PR_CHANGES_REQUESTED",
-        payload={"pull_request_id": pr_id},
-        created_at=now,
-    ))
+        notification_type="PR_CHANGES_REQUESTED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+        extra_payload=extra_payload,
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_REQUEST_CHANGES",
@@ -438,12 +486,15 @@ def reject_pr(
     pr.status = PullRequestStatus.REJECTED
     pr.reviewed_at = now
     rr = pr_repo.create_reject_reason(db, pr_id=pr_id, category=category, detail=detail, created_by=user_id, now=now)
-    db.add(Notification(
+    _add_pr_notification(
+        db,
         recipient_id=pr.author_id,
-        type="PR_REJECTED",
-        payload={"pull_request_id": pr_id},
-        created_at=now,
-    ))
+        notification_type="PR_REJECTED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+        extra_payload={"reject_category": category, "reject_detail": detail},
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_REJECT",
@@ -507,12 +558,19 @@ def merge_pr(
     )
     m.citation_url = f"{settings.site_url}/m/{m.id}"
 
-    db.add(Notification(
+    _add_pr_notification(
+        db,
         recipient_id=pr.author_id,
-        type="PR_MERGED",
-        payload={"pull_request_id": pr_id, "merge_id": m.id},
-        created_at=now,
-    ))
+        notification_type="PR_MERGED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+        extra_payload={
+            "final_grade": final_grade.value if isinstance(final_grade, ContributionGrade) else final_grade,
+            "merge_id": m.id,
+            "citation_url": m.citation_url,
+        },
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_MERGE",
@@ -541,12 +599,21 @@ def grade_override(
     now = _now()
     pr.author_grade_override = grade
     pr.author_grade_override_reason = reason
-    db.add(Notification(
+    extra_payload = {
+        "ai_grade": latest.ai_grade if latest else None,
+        "override_grade": grade,
+    }
+    if reason:
+        extra_payload["override_reason"] = reason
+    _add_pr_notification(
+        db,
         recipient_id=pr.author_id,
-        type="GRADE_ADJUSTED",
-        payload={"pull_request_id": pr_id, "grade": grade},
-        created_at=now,
-    ))
+        notification_type="GRADE_ADJUSTED",
+        pr=pr,
+        actor_id=user_id,
+        now=now,
+        extra_payload=extra_payload,
+    )
     db.add(AuditLog(
         actor_id=user_id,
         action_type="PR_GRADE_OVERRIDE",
