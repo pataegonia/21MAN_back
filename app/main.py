@@ -29,7 +29,7 @@ def create_app() -> FastAPI:
     @app.get("/")
     def root() -> dict[str, str]:
         return {
-            "message": "21MAN API is running",
+            "message": "WorldBuild API is running",
             "docs": "/docs",
             "health": f"{settings.api_prefix}/health",
         }

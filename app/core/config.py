@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "21MAN API"
+    app_name: str = "WorldBuild API"
     app_env: str = "local"
     debug: bool = Field(default=True, validation_alias="APP_DEBUG")
     api_prefix: str = "/api/v1"
